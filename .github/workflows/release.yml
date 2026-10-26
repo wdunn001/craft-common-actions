@@ -79,6 +79,21 @@ on:
         type: boolean
         required: false
         default: false
+      git-source-allowlist:
+        description: "Comma-separated git+https prefixes allowed in Cargo.lock"
+        type: string
+        required: false
+        default: "git+https://github.com/storytold/,git+https://github.com/wdunn001/"
+      pins-repo:
+        description: "GitHub repo that hosts pins.toml (owner/name)"
+        type: string
+        required: false
+        default: "wdunn001/craft-libs"
+      pins-ref:
+        description: "If set, verify Cargo.toml git pins match pins.toml on this ref. Empty skips the check."
+        type: string
+        required: false
+        default: "quasarke"
 
     secrets:
       APPLE_CERTIFICATE:
@@ -122,19 +137,28 @@ permissions:
   contents: read
 
 jobs:
-  # Fails fast before any build: git dependencies must come from github.com/storytold, and the
+  # Fails fast before any build: git dependencies must come from an allowed GitHub org, and the
   # lock file must not declare source replacement, patches or path overrides that could silently
   # swap one. Lives here (not in each app's release.yml) so every craftapp gets the gate at @main.
   # Every build job needs `version`, so these builds are gated transitively.
   git-sources:
-    name: Git dependencies come from storytold
+    name: Git dependencies come from allowed orgs
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Git dependencies come from storytold
+      - name: Crate pins match pins.toml
+        if: ${{ inputs.pins-ref != '' }}
+        env:
+          PINS_REPO: ${{ inputs.pins-repo }}
+          PINS_REF: ${{ inputs.pins-ref }}
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://raw.githubusercontent.com/${PINS_REPO}/${PINS_REF}/scripts/apply-craft-pins.py" -o /tmp/apply-craft-pins.py
+          python3 /tmp/apply-craft-pins.py --pins-url "https://raw.githubusercontent.com/${PINS_REPO}/${PINS_REF}/pins.toml" --root . --check
+      - name: Git dependencies come from allowed orgs
         run: |
           set -euo pipefail
           test -f Cargo.lock || { echo "Cargo.lock is missing"; exit 1; }
@@ -156,15 +180,25 @@ jobs:
           # Fails when Cargo.lock is out of date with the manifests.
           cargo metadata --locked --format-version 1 > /dev/null
           python3 - <<'PY'
-          import sys, tomllib
+          import os, sys, tomllib
+          allowed = [
+              prefix.strip()
+              for prefix in os.environ.get(
+                  "GIT_SOURCE_ALLOWLIST",
+                  "git+https://github.com/storytold/,git+https://github.com/wdunn001/",
+              ).split(",")
+              if prefix.strip()
+          ]
           lock = tomllib.load(open("Cargo.lock", "rb"))
           bad = sorted({p["source"] for p in lock.get("package", [])
                         if p.get("source", "").startswith("git+")
-                        and not p["source"].startswith("git+https://github.com/storytold/")})
+                        and not any(p["source"].startswith(prefix) for prefix in allowed)})
           if bad:
-              print("Git dependencies outside github.com/storytold:", *bad, sep="\n")
+              print("Git dependencies outside allowlist:", *bad, sep="\n")
               sys.exit(1)
           PY
+        env:
+          GIT_SOURCE_ALLOWLIST: ${{ inputs.git-source-allowlist }}
 
   version:
     timeout-minutes: 10
