@@ -220,8 +220,7 @@ jobs:
     timeout-minutes: 90
     name: macOS universal
     needs: [version]
-    runs-on: macos-15-xlarge
-    environment: release
+    runs-on: macos-15
     env:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
@@ -352,7 +351,6 @@ jobs:
     name: Windows ${{ matrix.arch }}
     needs: [version]
     runs-on: windows-latest
-    environment: release
     strategy:
       fail-fast: false
       matrix:
@@ -1246,7 +1244,6 @@ jobs:
     if: "!cancelled() && !contains(needs.*.result, 'failure')"
     needs: [version, macos, windows, linux, linux-riscv64, flatpak, arch, freebsd, web, server]
     runs-on: ubuntu-latest
-    environment: release
     permissions:
       contents: write
     steps:
